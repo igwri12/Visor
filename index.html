@@ -1,0 +1,137 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Visor</title>
+<link rel="manifest" href="manifest.json">
+<meta name="theme-color" content="#000000">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<link rel="apple-touch-icon" href="icon-192.png">
+<style>
+:root{box-sizing:border-box}
+[hidden]{display:none!important}
+html,body{height:100%;margin:0;background:#000;overflow:hidden;color:#fff;font-family:system-ui,-apple-system,sans-serif;-webkit-tap-highlight-color:transparent;user-select:none;-webkit-user-select:none}
+#stage{position:fixed;inset:0;display:flex;background:#000}
+.eye{flex:1;min-width:0;height:100%;overflow:hidden;position:relative}
+.eye video{width:100%;height:100%;object-fit:cover;transform:scale(var(--z,1));transform-origin:center;background:#000}
+#e2{display:none}
+#stage.vr #e2{display:block}
+#menu{position:fixed;left:0;right:0;bottom:0;padding:16px 16px calc(16px + env(safe-area-inset-bottom,0px));background:rgba(0,0,0,.72);display:flex;flex-direction:column;gap:12px;transition:opacity .25s;z-index:5}
+#menu.off{opacity:0;pointer-events:none}
+#menu .row{display:flex;gap:8px}
+#menu button{flex:1;padding:14px 8px;font-size:15px;color:#fff;background:#2a2a2a;border:1px solid #444;border-radius:12px}
+#menu button.on{background:#0a6cff;border-color:#0a6cff}
+#menu label{display:flex;align-items:center;gap:12px;font-size:15px}
+#menu input[type=range]{flex:1}
+#intro{position:fixed;inset:0;background:#000;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:16px;padding:24px;text-align:center;z-index:10}
+#intro button{font-size:20px;padding:18px 32px;border-radius:16px;border:0;background:#0a6cff;color:#fff}
+#msg{font-size:15px;opacity:.8;max-width:320px}
+</style>
+</head>
+<body>
+<div id="stage">
+  <div class="eye"><video id="v1" playsinline muted autoplay></video></div>
+  <div class="eye" id="e2"><video id="v2" playsinline muted autoplay></video></div>
+</div>
+
+<div id="menu" class="off">
+  <div class="row">
+    <button id="flip">Cambiar cámara</button>
+    <button id="vr">Visor doble</button>
+    <button id="fs">Pantalla completa</button>
+  </div>
+  <label>Zoom <input id="zoom" type="range" min="1" max="4" step="0.1" value="1"></label>
+</div>
+
+<div id="intro">
+  <button id="go">Iniciar visor</button>
+  <div id="msg">Toca para abrir la cámara. Después, la pantalla solo mostrará la imagen; toca una vez para ver el menú.</div>
+</div>
+
+<script>
+var stream, track, facing = 'environment', hw = false, wl = null, hideT = null;
+var $ = function (id) { return document.getElementById(id); };
+var v1 = $('v1'), v2 = $('v2'), menu = $('menu'), stage = $('stage'), zoom = $('zoom');
+
+async function start() {
+  try {
+    if (stream) stream.getTracks().forEach(function (t) { t.stop(); });
+    stream = await navigator.mediaDevices.getUserMedia({
+      video: { facingMode: { ideal: facing }, width: { ideal: 1920 }, height: { ideal: 1080 } },
+      audio: false
+    });
+    track = stream.getVideoTracks()[0];
+    v1.srcObject = stream;
+    v2.srcObject = stream;
+    await v1.play();
+    v2.play().catch(function () {});
+    setupZoom();
+    $('intro').hidden = true;
+    lockScreen();
+  } catch (e) {
+    $('msg').textContent = 'No se pudo abrir la cámara. Revisa el permiso de cámara en el navegador y abre el enlace directamente en Safari o Chrome.';
+  }
+}
+
+async function lockScreen() {
+  try { wl = await navigator.wakeLock.request('screen'); } catch (e) {}
+}
+document.addEventListener('visibilitychange', function () {
+  if (document.visibilityState === 'visible' && stream) lockScreen();
+});
+
+function setupZoom() {
+  var caps = (track.getCapabilities && track.getCapabilities()) || {};
+  document.documentElement.style.setProperty('--z', 1);
+  if (caps.zoom) {
+    hw = true;
+    zoom.min = caps.zoom.min; zoom.max = caps.zoom.max;
+    zoom.step = caps.zoom.step || 0.1; zoom.value = caps.zoom.min;
+  } else {
+    hw = false;
+    zoom.min = 1; zoom.max = 4; zoom.step = 0.1; zoom.value = 1;
+  }
+}
+
+zoom.addEventListener('input', function () {
+  var z = parseFloat(zoom.value);
+  if (hw) track.applyConstraints({ advanced: [{ zoom: z }] }).catch(function () {});
+  else document.documentElement.style.setProperty('--z', z);
+  showMenu();
+});
+
+function showMenu() {
+  menu.classList.remove('off');
+  clearTimeout(hideT);
+  hideT = setTimeout(function () { menu.classList.add('off'); }, 4000);
+}
+function hideMenu() {
+  clearTimeout(hideT);
+  menu.classList.add('off');
+}
+
+stage.addEventListener('click', function () {
+  if (menu.classList.contains('off')) showMenu(); else hideMenu();
+});
+menu.addEventListener('click', function (e) { e.stopPropagation(); showMenu(); });
+
+$('go').addEventListener('click', start);
+$('flip').addEventListener('click', function () {
+  facing = facing === 'environment' ? 'user' : 'environment';
+  start();
+});
+$('vr').addEventListener('click', function () {
+  stage.classList.toggle('vr');
+  $('vr').classList.toggle('on');
+});
+$('fs').addEventListener('click', function () {
+  var el = document.documentElement;
+  if (document.fullscreenElement) document.exitFullscreen();
+  else if (el.requestFullscreen) el.requestFullscreen().catch(function () {});
+});
+if ('serviceWorker' in navigator) navigator.serviceWorker.register('sw.js').catch(function () {});
+</script>
+</body>
+</html>
